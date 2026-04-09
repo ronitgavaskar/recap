@@ -1,0 +1,1 @@
+- [Project overview](project_recap.md) — Recap: autonomous standup generator (GitHub → Claude → Slack)
