@@ -4,7 +4,12 @@
       "Bash(npm install:*)",
       "Bash(npx tsc:*)",
       "Bash(npm run:*)",
-      "Bash(npx ts-node:*)"
+      "Bash(npx ts-node:*)",
+      "Bash(chmod +x /Users/ronitgavaskar/Desktop/Recap/scripts/deploy.sh)",
+      "Bash(zip -qr /tmp/recap-test.zip dist/ node_modules/ package.json)",
+      "Bash(unzip -l /tmp/recap-test.zip)",
+      "Bash(GITHUB_TOKEN=\"ghp_test\" ANTHROPIC_API_KEY=\"sk-ant-test\" GITHUB_USERNAME=\"testuser\" SNS_TOPIC_ARN=\"arn:aws:sns:us-east-1:123456789:recap-topic\" bash:*)",
+      "Bash(SNS_TOPIC_ARN=\"arn:aws:sns:us-east-1:389291946026:recap-standup-email\" GITHUB_TOKEN=\"test\" ANTHROPIC_API_KEY=\"test\" GITHUB_USERNAME=\"test\" bash:*)"
     ]
   }
 }

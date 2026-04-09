@@ -1,4 +1,4 @@
-import { StandupUpdate } from "./claude";
+import { StandupUpdate } from "./claude.js";
 
 export async function postToSlack(
   webhookUrl: string,

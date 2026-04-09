@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { GitHubEvent } from "./github";
+import { GitHubEvent } from "./github.js";
 
 export interface StandupUpdate {
   summary: string;

@@ -2,20 +2,23 @@
   "name": "recap",
   "version": "0.1.0",
   "description": "Autonomous standup generator: GitHub activity → Claude → Slack",
+  "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "dev": "node --import 'data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"ts-node/esm\", pathToFileURL(\"./\"));' src/index.ts",
+    "deploy": "./scripts/deploy.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "octokit": "^4.1.2",
-    "dotenv": "^16.4.7"
+    "@aws-sdk/client-sns": "^3.1028.0",
+    "dotenv": "^16.4.7",
+    "octokit": "^4.1.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
-    "typescript": "^5.7.3",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
   }
 }

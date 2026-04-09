@@ -1,8 +1,8 @@
 import "dotenv/config";
 import { Octokit } from "octokit";
 import Anthropic from "@anthropic-ai/sdk";
-import { fetchActivitySince } from "./github";
-import { generateStandup } from "./claude";
+import { fetchActivitySince } from "./github.js";
+import { generateStandup } from "./claude.js";
 
 type Period = "day" | "week" | "sprint";
 
