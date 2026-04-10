@@ -4,6 +4,8 @@ Autonomous standup generator. Recap pulls your GitHub activity, feeds it to Clau
 
 Run it locally from the terminal or deploy it to AWS Lambda on a schedule to get standup emails every morning.
 
+![Recap standup email](pics/daily_screenshot.png)
+
 ## Architecture
 
 ```
