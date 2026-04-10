@@ -18,13 +18,16 @@ if [ ! -f "$PROJECT_ROOT/.env" ]; then
 fi
 
 source_env() {
-  while IFS='=' read -r key value; do
+  while IFS= read -r line || [ -n "$line" ]; do
     # skip blank lines and comments
-    [[ -z "$key" || "$key" =~ ^# ]] && continue
-    # strip surrounding quotes from value
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    # strip surrounding quotes and whitespace
     value="${value%\"}"
     value="${value#\"}"
-    export "$key=$value"
+    value="${value%"${value##*[![:space:]]}"}"
+    [[ -n "$key" && -n "$value" ]] && export "$key=$value"
   done < "$PROJECT_ROOT/.env"
 }
 source_env
@@ -50,8 +53,11 @@ echo "Zip size: $(du -h "$ZIP_FILE" | cut -f1)"
 
 # Build environment variables as JSON
 ENV_JSON="{\"Variables\":{\"GITHUB_TOKEN\":\"${GITHUB_TOKEN}\",\"ANTHROPIC_API_KEY\":\"${ANTHROPIC_API_KEY}\",\"GITHUB_USERNAME\":\"${GITHUB_USERNAME}\""
-if [ -n "${SNS_TOPIC_ARN:-}" ]; then
-  ENV_JSON="${ENV_JSON},\"SNS_TOPIC_ARN\":\"${SNS_TOPIC_ARN}\""
+if [ -n "${SES_SENDER_EMAIL:-}" ]; then
+  ENV_JSON="${ENV_JSON},\"SES_SENDER_EMAIL\":\"${SES_SENDER_EMAIL}\""
+fi
+if [ -n "${SES_RECIPIENT_EMAIL:-}" ]; then
+  ENV_JSON="${ENV_JSON},\"SES_RECIPIENT_EMAIL\":\"${SES_RECIPIENT_EMAIL}\""
 fi
 ENV_JSON="${ENV_JSON}}}"
 

@@ -38,6 +38,9 @@ export async function fetchActivitySince(
   const reviews = await fetchPRReviews(octokit, username, since);
   events.push(...reviews);
 
+  const commits = await fetchCommits(octokit, username, since);
+  events.push(...commits);
+
   const repoEvents = await fetchRepoEvents(octokit, username, since);
   events.push(...repoEvents);
 
@@ -127,7 +130,65 @@ async function fetchPRReviews(
   }
 }
 
-const TRACKED_EVENT_TYPES = ["PushEvent", "CreateEvent", "IssuesEvent", "IssueCommentEvent"];
+async function fetchCommits(
+  octokit: Octokit,
+  username: string,
+  since: string
+): Promise<GitHubEvent[]> {
+  try {
+    // Get repos the user pushed to recently from the Events API
+    const { data: eventData } = await octokit.rest.activity.listEventsForAuthenticatedUser({
+      username,
+      per_page: 100,
+    });
+
+    const pushedRepos = new Set<string>();
+    for (const event of eventData) {
+      if (
+        event.type === "PushEvent" &&
+        event.created_at &&
+        new Date(event.created_at) >= new Date(since)
+      ) {
+        pushedRepos.add(event.repo.name);
+      }
+    }
+
+    // Fetch commits from each repo the user pushed to. Since the Events API
+    // only returns the authenticated user's own push events, all commits in
+    // these repos within the time window are attributable to the user.
+    const events: GitHubEvent[] = [];
+    for (const repoFullName of pushedRepos) {
+      const [owner, repo] = repoFullName.split("/");
+      try {
+        const { data: commits } = await octokit.rest.repos.listCommits({
+          owner,
+          repo,
+          since,
+          per_page: 100,
+        });
+
+        for (const commit of commits) {
+          events.push({
+            repo: repoFullName,
+            type: "commit",
+            title: commit.commit.message.split("\n")[0],
+            url: commit.html_url,
+            timestamp: commit.commit.author?.date ?? commit.commit.committer?.date ?? since,
+          });
+        }
+      } catch (err) {
+        console.error(`Failed to fetch commits for ${repoFullName}:`, err);
+      }
+    }
+
+    return events;
+  } catch (err) {
+    console.error("Failed to fetch commit events:", err);
+    return [];
+  }
+}
+
+const TRACKED_EVENT_TYPES = ["CreateEvent", "IssuesEvent", "IssueCommentEvent"];
 
 async function fetchRepoEvents(
   octokit: Octokit,
@@ -152,18 +213,7 @@ async function fetchRepoEvents(
     for (const event of recentEvents) {
       const repo = event.repo.name;
 
-      if (event.type === "PushEvent") {
-        const payload = event.payload as { commits?: Array<{ message: string; sha: string }> };
-        for (const commit of payload.commits ?? []) {
-          events.push({
-            repo,
-            type: "commit",
-            title: commit.message.split("\n")[0],
-            url: `https://github.com/${repo}/commit/${commit.sha}`,
-            timestamp: event.created_at!,
-          });
-        }
-      } else if (event.type === "CreateEvent") {
+      if (event.type === "CreateEvent") {
         const payload = event.payload as { ref_type?: string; ref?: string };
         const label = payload.ref_type === "repository"
           ? `Created repository ${repo}`

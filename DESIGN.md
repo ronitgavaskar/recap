@@ -17,7 +17,7 @@
 |                |                |                     |
 | MON-FRI 9am   |                |  1. fetchActivity   |
 +----------------+                |  2. generateStandup |
-                                  |  3. publish to SNS  |
+                                  |  3. send via SES    |
                                   +----------+----------+
                                              |
                                              | Claude API
@@ -33,10 +33,10 @@
                                              | formatted standup text
                                              v
                                   +---------------------+
-                                  |   Amazon SNS        |
+                                  |   Amazon SES        |
                                   |                     |
-                                  |  Topic: recap-      |
-                                  |  standup-email      |
+                                  |  HTML email with    |
+                                  |  styled standup     |
                                   +----------+----------+
                                              |
                                              | email (SMTP)
@@ -80,11 +80,22 @@ A local cron job (`crontab`) works but requires a machine that's always on. Lamb
 
 The tradeoff is added deployment complexity (`scripts/deploy.sh`), but that's a one-time cost.
 
-### SNS over Slack (for now)
+### SES over SNS for email delivery
 
-Slack integration (`src/slack.ts`) is scaffolded but not wired up in V1. We chose SNS + email for initial delivery because:
+We initially used Amazon SNS for email delivery but switched to SES for several reasons:
 
-- **No Slack app setup required** -- SNS email subscriptions are simpler to configure
+- **HTML support** -- SNS only sends plain text emails, so markdown formatting (`**bold**`, bullet lists) appeared as raw syntax. SES supports full HTML, allowing styled emails with proper bold text, bullet lists, headers, and footers.
+- **Better subject lines** -- SES gives full control over the email subject. We use dynamic subjects like `Standup Update for ronitgavaskar | 2026-04-02 to 2026-04-09` that include the username and date range.
+- **No topic management** -- SNS requires creating a topic, subscribing emails, and confirming subscriptions. SES just needs a verified sender address.
+- **Production path** -- SES is the standard AWS email service. Moving to production (custom domain, DKIM/SPF, higher sending limits) is straightforward.
+
+The tradeoff: SES sandbox requires verifying both sender and recipient addresses. For solo use this is fine (same address for both). For team use, you'd request SES production access.
+
+### SES over Slack (for now)
+
+Slack integration (`src/slack.ts`) is scaffolded but not wired up in V1. We chose email for initial delivery because:
+
+- **No Slack app setup required** -- SES just needs a verified email address
 - **Works for solo use** -- standups go to your inbox, no shared workspace needed
 - **Slack is next** -- the module exists and will be connected when team features are added
 
@@ -104,7 +115,7 @@ We use `claude-sonnet-4-20250514` because:
 
 ### 1. GitHub fetch (`src/github.ts`)
 
-Four parallel-ish data sources, each with independent error handling:
+Five data sources, each with independent error handling:
 
 ```
 fetchActivitySince(octokit, username, since)
@@ -112,7 +123,8 @@ fetchActivitySince(octokit, username, since)
   +-- fetchPRsOpened()       GET /search/issues?q=type:pr+author:X+created:>=T
   +-- fetchPRsMerged()       GET /search/issues?q=type:pr+author:X+merged:>=T
   +-- fetchPRReviews()       GET /search/issues?q=type:pr+reviewed-by:X+updated:>=T
-  +-- fetchRepoEvents()      GET /users/X/events  (PushEvent, CreateEvent, IssuesEvent, IssueCommentEvent)
+  +-- fetchCommits()         GET /users/X/events (find pushed repos) --> GET /repos/O/R/commits
+  +-- fetchRepoEvents()      GET /users/X/events  (CreateEvent, IssuesEvent, IssueCommentEvent)
   |
   v
   GitHubEvent[] (sorted newest-first)
@@ -120,6 +132,8 @@ fetchActivitySince(octokit, username, since)
 ```
 
 Each function returns `[]` on error so one failing source doesn't break the whole pipeline.
+
+Commits are fetched in two steps: first the Events API identifies repos the user pushed to, then the Repos API fetches actual commit details. This avoids a limitation where the typed Octokit client strips commit data from PushEvent payloads.
 
 ### 2. Standup generation (`src/claude.ts`)
 
@@ -136,21 +150,21 @@ GitHubEvent[] --> format as text block --> Claude API --> StandupUpdate { summar
 
 **CLI:** `console.log(standup.summary)` -- that's it.
 
-**Lambda:** `console.log` (CloudWatch) + `SNS.publish` (email). SNS is optional -- if `SNS_TOPIC_ARN` is unset, the Lambda runs successfully and just logs.
+**Lambda:** `console.log` (CloudWatch) + SES HTML email. The markdown standup is converted to styled HTML with bold headers, bullet lists, and a clean layout. SES delivery is optional -- if `SES_SENDER_EMAIL` or `SES_RECIPIENT_EMAIL` is unset, the Lambda runs successfully and just logs.
 
 ## Known limitations
 
 - **GitHub Events API returns max 90 days / 300 events** -- the `--period sprint` option works within this, but very active users might miss older events in a 2-week window
 - **Search API rate limits** -- authenticated users get 30 search requests/minute. With 3 search calls per run, this is fine for daily use but could be an issue if invoked rapidly
 - **No deduplication** -- a PR that was both opened and merged in the same period will appear twice (as `pr-opened` and `pr-merged`). This is intentional -- both are meaningful standup items -- but could look redundant
-- **Commit attribution** -- the Events API only shows pushes by the authenticated user. Commits authored by the user but pushed by someone else (e.g., merge commits) won't appear
-- **SNS email formatting** -- SNS emails are plain text. Markdown formatting (`**bold**`) appears as-is in email clients. Rich HTML email would require SES instead of SNS
+- **Commit attribution** -- commits are fetched from repos the user pushed to. In shared repos, this may include commits by other contributors if the Repos API returns them in the time window
+- **SES sandbox** -- new SES accounts are in sandbox mode, which requires verifying both sender and recipient email addresses. Request production access for unrestricted sending
 - **Single user only** -- the current design fetches activity for one `GITHUB_USERNAME`. Team mode would require per-user configs
 
 ## Future roadmap
 
 ### Slack integration
-Wire up `src/slack.ts` to post standups to a Slack channel via incoming webhook. Add `SLACK_WEBHOOK_URL` to the Lambda env vars and post alongside (or instead of) SNS.
+Wire up `src/slack.ts` to post standups to a Slack channel via incoming webhook. Add `SLACK_WEBHOOK_URL` to the Lambda env vars and post alongside (or instead of) email.
 
 ### Jira / Linear support
 Add `src/jira.ts` or `src/linear.ts` to fetch ticket activity (status changes, comments, assignments). Merge with GitHub events before sending to Claude for a more complete standup.
@@ -160,9 +174,6 @@ Build a simple frontend that shows standup history over time. Store generated st
 
 ### Team mode
 Support multiple users with separate configs. Each user gets their own standup generated and delivered. Could run as a single Lambda that iterates over a user list in DynamoDB, or as separate per-user invocations.
-
-### Rich email via SES
-Replace SNS with Amazon SES for HTML email delivery. Render the Markdown standup as styled HTML with proper formatting, links, and maybe a header with the date and period.
 
 ### PR diff summaries
 For merged PRs, fetch the diff stats (files changed, insertions, deletions) and include them in the Claude prompt so the standup can reference the scope of changes.

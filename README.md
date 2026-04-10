@@ -9,7 +9,7 @@ Run it locally from the terminal or deploy it to AWS Lambda on a schedule to get
 ```
 Local CLI:    npm run dev --> GitHub API --> Claude API --> terminal
 
-Lambda:       EventBridge (cron) --> Lambda --> GitHub API --> Claude API --> SNS --> email
+Lambda:       EventBridge (cron) --> Lambda --> GitHub API --> Claude API --> SES --> email
 ```
 
 ### Modules
@@ -20,7 +20,7 @@ Lambda:       EventBridge (cron) --> Lambda --> GitHub API --> Claude API --> SN
 | `src/claude.ts` | Sends activity to Claude and returns a formatted standup |
 | `src/slack.ts` | Slack webhook posting (placeholder for future use) |
 | `src/index.ts` | CLI entry point -- parses flags, orchestrates the pipeline |
-| `src/lambda.ts` | AWS Lambda handler -- same pipeline, plus SNS delivery |
+| `src/lambda.ts` | AWS Lambda handler -- same pipeline, plus SES email delivery |
 | `scripts/deploy.sh` | Builds, packages, and deploys the Lambda function |
 
 ## Prerequisites
@@ -29,7 +29,7 @@ Lambda:       EventBridge (cron) --> Lambda --> GitHub API --> Claude API --> SN
 - A [GitHub personal access token](https://github.com/settings/tokens) with `repo` and `read:user` scopes
 - An [Anthropic API key](https://console.anthropic.com/)
 - (For Lambda) AWS CLI configured with credentials, and an IAM role for Lambda execution
-- (For email) An SNS topic with an email subscription
+- (For email) A verified email address in Amazon SES
 
 ## Setup
 
@@ -81,7 +81,7 @@ Output is printed directly to the terminal in standup format:
 
 Create a Lambda execution role with these policies:
 - `AWSLambdaBasicExecutionRole` (for CloudWatch logs)
-- `sns:Publish` permission on your SNS topic (if using email delivery)
+- `ses:SendEmail` permission (if using email delivery)
 
 Add the role ARN to `.env`:
 
@@ -148,29 +148,30 @@ aws events put-targets \
   --targets "Id"="1","Arn"="$(aws lambda get-function --function-name recap-standup --query 'Configuration.FunctionArn' --output text)","Input"="{\"period\":\"week\"}"
 ```
 
-## SNS email delivery
+## SES email delivery
 
-### 1. Create an SNS topic
-
-```bash
-aws sns create-topic --name recap-standup-email
-```
-
-### 2. Subscribe your email
+### 1. Verify your email address in SES
 
 ```bash
-aws sns subscribe \
-  --topic-arn arn:aws:sns:us-east-1:YOUR_ACCOUNT_ID:recap-standup-email \
-  --protocol email \
-  --notification-endpoint your@email.com
+aws ses verify-email-identity --email-address your@email.com
 ```
 
-Check your inbox and confirm the subscription.
+Check your inbox and click the verification link.
 
-### 3. Add the topic ARN to `.env`
+### 2. Add SES config to `.env`
 
 ```
-SNS_TOPIC_ARN=arn:aws:sns:us-east-1:YOUR_ACCOUNT_ID:recap-standup-email
+SES_SENDER_EMAIL=your@email.com
+SES_RECIPIENT_EMAIL=your@email.com
+```
+
+### 3. Ensure your Lambda role has SES permissions
+
+```bash
+aws iam put-role-policy \
+  --role-name recap-lambda-role \
+  --policy-name ses-send \
+  --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"ses:SendEmail","Resource":"*"}]}'
 ```
 
 ### 4. Redeploy
@@ -179,4 +180,6 @@ SNS_TOPIC_ARN=arn:aws:sns:us-east-1:YOUR_ACCOUNT_ID:recap-standup-email
 npm run deploy
 ```
 
-The Lambda will now email your standup with the subject line `Recap: Your standup for YYYY-MM-DD` each time it runs. If `SNS_TOPIC_ARN` is not set, the Lambda still works -- it just logs to CloudWatch without sending email.
+The Lambda will now send a styled HTML email with the subject `Standup Update for <username> | <date range>` each time it runs. If `SES_SENDER_EMAIL` or `SES_RECIPIENT_EMAIL` is not set, the Lambda still works -- it just logs to CloudWatch without sending email.
+
+Note: SES sandbox accounts can only send to verified email addresses. To send to any address, request production access via the AWS console.
