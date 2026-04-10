@@ -17,7 +17,7 @@
 |                |                |                     |
 | MON-FRI 9am   |                |  1. fetchActivity   |
 +----------------+                |  2. generateStandup |
-                                  |  3. send via SES    |
+                                  |  3. deliver         |
                                   +----------+----------+
                                              |
                                              | Claude API
@@ -28,22 +28,22 @@
                                   |                     |
                                   |  GitHub events -->  |
                                   |  standup summary    |
-                                  +---------------------+
-                                             |
-                                             | formatted standup text
-                                             v
-                                  +---------------------+
-                                  |   Amazon SES        |
-                                  |                     |
-                                  |  HTML email with    |
-                                  |  styled standup     |
                                   +----------+----------+
                                              |
-                                             | email (SMTP)
-                                             v
-                                  +---------------------+
-                                  |   Gmail / inbox     |
-                                  +---------------------+
+                              +--------------+--------------+
+                              |                             |
+                              v                             v
+                   +---------------------+       +---------------------+
+                   |   Amazon SES        |       |   Slack Webhook     |
+                   |                     |       |                     |
+                   |  HTML email with    |       |  Block Kit message  |
+                   |  styled standup     |       |  with mrkdwn        |
+                   +----------+----------+       +----------+----------+
+                              |                             |
+                              v                             v
+                   +---------------------+       +---------------------+
+                   |   Gmail / inbox     |       |   Slack channel     |
+                   +---------------------+       +---------------------+
 ```
 
 ### Local CLI flow (alternative)
@@ -91,13 +91,14 @@ We initially used Amazon SNS for email delivery but switched to SES for several 
 
 The tradeoff: SES sandbox requires verifying both sender and recipient addresses. For solo use this is fine (same address for both). For team use, you'd request SES production access.
 
-### SES over Slack (for now)
+### Dual delivery: SES + Slack
 
-Slack integration (`src/slack.ts`) is scaffolded but not wired up in V1. We chose email for initial delivery because:
+Both delivery channels are implemented and run independently:
 
-- **No Slack app setup required** -- SES just needs a verified email address
-- **Works for solo use** -- standups go to your inbox, no shared workspace needed
-- **Slack is next** -- the module exists and will be connected when team features are added
+- **SES (email)** -- HTML-formatted email via Amazon SES. Supports styled bold text, bullet lists, headers, and a metadata line with username/period/date. Best for async consumption and personal record-keeping.
+- **Slack (webhook)** -- Block Kit formatted message via incoming webhook. Uses Slack's native `mrkdwn` for bold, bullet points (`•`), and a context block showing the username and period. Best for team visibility.
+
+Both are optional and independent -- if one fails, the other still delivers. Configure either or both via env vars (`SES_SENDER_EMAIL`/`SES_RECIPIENT_EMAIL` for email, `SLACK_WEBHOOK_URL` for Slack). If neither is set, the Lambda still runs and logs to CloudWatch.
 
 ### No bundler
 
@@ -150,7 +151,10 @@ GitHubEvent[] --> format as text block --> Claude API --> StandupUpdate { summar
 
 **CLI:** `console.log(standup.summary)` -- that's it.
 
-**Lambda:** `console.log` (CloudWatch) + SES HTML email. The markdown standup is converted to styled HTML with bold headers, bullet lists, and a clean layout. SES delivery is optional -- if `SES_SENDER_EMAIL` or `SES_RECIPIENT_EMAIL` is unset, the Lambda runs successfully and just logs.
+**Lambda:** `console.log` (CloudWatch) + up to two delivery channels, each in its own try/catch:
+
+- **SES** -- markdown is converted to styled HTML (bold headers, bullet lists, metadata line). Sends via `SESClient.send(SendEmailCommand)`. Skipped if `SES_SENDER_EMAIL` or `SES_RECIPIENT_EMAIL` is unset.
+- **Slack** -- markdown `**bold**` is converted to Slack `*bold*`, bullets `- ` become `• `. Sends a Block Kit payload (header, context, divider, section) via `fetch` to the incoming webhook URL. Skipped if `SLACK_WEBHOOK_URL` is unset.
 
 ## Known limitations
 
@@ -162,9 +166,6 @@ GitHubEvent[] --> format as text block --> Claude API --> StandupUpdate { summar
 - **Single user only** -- the current design fetches activity for one `GITHUB_USERNAME`. Team mode would require per-user configs
 
 ## Future roadmap
-
-### Slack integration
-Wire up `src/slack.ts` to post standups to a Slack channel via incoming webhook. Add `SLACK_WEBHOOK_URL` to the Lambda env vars and post alongside (or instead of) email.
 
 ### Jira / Linear support
 Add `src/jira.ts` or `src/linear.ts` to fetch ticket activity (status changes, comments, assignments). Merge with GitHub events before sending to Claude for a more complete standup.

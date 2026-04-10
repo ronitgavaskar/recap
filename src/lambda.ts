@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { fetchActivitySince } from "./github.js";
 import { generateStandup } from "./claude.js";
+import { postToSlack } from "./slack.js";
 
 type Period = "day" | "week" | "sprint";
 
@@ -94,28 +95,46 @@ export async function handler(event: LambdaEvent = {}): Promise<{ statusCode: nu
   console.log(`Standup (${config.label}):\n`);
   console.log(standup.summary);
 
+  // SES email delivery
   const sesRecipient = process.env.SES_RECIPIENT_EMAIL;
   const sesSender = process.env.SES_SENDER_EMAIL;
   if (sesRecipient && sesSender) {
-    const dateRange = formatDateRange(periodKey);
-    const subject = `Standup Update for ${githubUsername} | ${dateRange}`;
-    const htmlBody = buildEmailHtml(standup.summary, githubUsername, periodKey);
+    try {
+      const dateRange = formatDateRange(periodKey);
+      const subject = `Standup Update for ${githubUsername} | ${dateRange}`;
+      const htmlBody = buildEmailHtml(standup.summary, githubUsername, periodKey);
 
-    const ses = new SESClient({});
-    await ses.send(new SendEmailCommand({
-      Source: sesSender,
-      Destination: { ToAddresses: [sesRecipient] },
-      Message: {
-        Subject: { Data: subject },
-        Body: {
-          Html: { Data: htmlBody },
-          Text: { Data: standup.summary },
+      const ses = new SESClient({});
+      await ses.send(new SendEmailCommand({
+        Source: sesSender,
+        Destination: { ToAddresses: [sesRecipient] },
+        Message: {
+          Subject: { Data: subject },
+          Body: {
+            Html: { Data: htmlBody },
+            Text: { Data: standup.summary },
+          },
         },
-      },
-    }));
-    console.log(`Standup emailed to ${sesRecipient}.`);
+      }));
+      console.log(`Standup emailed to ${sesRecipient}.`);
+    } catch (err) {
+      console.error("SES delivery failed:", err);
+    }
   } else {
     console.log("SES_RECIPIENT_EMAIL or SES_SENDER_EMAIL not set, skipping email.");
+  }
+
+  // Slack delivery
+  const slackWebhookUrl = process.env.SLACK_WEBHOOK_URL;
+  if (slackWebhookUrl) {
+    try {
+      await postToSlack(slackWebhookUrl, standup, githubUsername, config.label);
+      console.log("Standup posted to Slack.");
+    } catch (err) {
+      console.error("Slack delivery failed:", err);
+    }
+  } else {
+    console.log("SLACK_WEBHOOK_URL not set, skipping Slack.");
   }
 
   return { statusCode: 200, body: standup.summary };

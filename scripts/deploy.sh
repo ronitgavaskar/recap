@@ -59,6 +59,9 @@ fi
 if [ -n "${SES_RECIPIENT_EMAIL:-}" ]; then
   ENV_JSON="${ENV_JSON},\"SES_RECIPIENT_EMAIL\":\"${SES_RECIPIENT_EMAIL}\""
 fi
+if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+  ENV_JSON="${ENV_JSON},\"SLACK_WEBHOOK_URL\":\"${SLACK_WEBHOOK_URL}\""
+fi
 ENV_JSON="${ENV_JSON}}}"
 
 if aws lambda get-function --function-name "$FUNCTION_NAME" > /dev/null 2>&1; then
